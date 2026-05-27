@@ -109,53 +109,76 @@ if st.session_state.analyses:
                 if key in st.session_state.analyses:
                     st.markdown(st.session_state.analyses[key])
 
-# ===== 步骤3: 输入想法 + 一键生成 =====
+# ===== 步骤3: 创作 =====
 st.divider()
 st.subheader("[WRITE] 步骤3: 创作你的小说")
 
 if not st.session_state.analyses:
     st.caption("请先完成步骤2的分析")
 else:
+    # --- 3a: 输入故事想法 ---
+    st.markdown("#### 3a. 描述你的故事")
     user_idea = st.text_area(
-        "输入你想写的故事（描述大致情节、人物、背景即可，越详细越好）",
+        "你想写一个什么样的故事？（情节、人物、背景，越详细越好）",
         placeholder="例：一个都市悬疑故事。主角是外卖小哥陈然，某天送餐时无意间撞见一桩凶案，"
                     "凶手发现了他，开始追杀。陈然只能靠自己送外卖时积累的对城市每个角落的了解，"
                     "在城市的缝隙中求生，同时一步步揭开凶手背后的秘密组织...",
-        height=100,
+        height=80,
     )
 
-    # 显示参考字数
     target = st.session_state.novel_words
-    st.caption(f"目标字数: {target:,} 字（与参考小说相同） | 如无需精确匹配可调整")
+    st.caption(f"目标字数: {target:,} 字（与参考小说一致）")
 
-    # 一键生成按钮
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        go = st.button(
-            f"[ROCKET] 一键生成全书（约{target:,}字，需3-8分钟）",
-            type="primary", use_container_width=True,
-        )
-    with col2:
-        target_override = st.number_input("自定义字数", value=target, step=1000, format="%d")
+    col_a, col_b = st.columns([1, 2])
+    with col_a:
+        gen_btn = st.button("[BULB] 生成大纲", type="primary", use_container_width=True)
+    with col_b:
+        st.caption("AI 基于分析结果 + 你的想法，生成故事大纲和章节规划")
 
-    if go:
+    if gen_btn:
         if not user_idea:
             st.warning("请先输入你的故事想法")
         else:
+            with st.status("构思大纲..."):
+                st.session_state.outline = generate_outline(
+                    st.session_state.analyses, user_idea, model
+                )
+            st.success("大纲已生成，请审阅修改")
+
+    # --- 3b: 审阅修改大纲 ---
+    if st.session_state.outline:
+        st.divider()
+        st.markdown("#### 3b. 审阅并修改大纲")
+
+        edited_outline = st.text_area(
+            "确认或修改大纲（你可以自由调整章节、情节、人物设定）",
+            value=st.session_state.outline,
+            height=300,
+        )
+        # 同步修改到 session
+        st.session_state.outline = edited_outline
+
+        # --- 3c: 确认后开始写作 ---
+        st.divider()
+        st.markdown("#### 3c. 确认大纲，开始写作")
+
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            write_btn = st.button(
+                f"[ROCKET] 确认大纲，开始写作（约{target:,}字，需3-8分钟）",
+                type="primary", use_container_width=True,
+            )
+        with col2:
+            target_override = st.number_input(
+                "自定义字数", value=target, step=1000, format="%d"
+            )
+
+        if write_btn:
             final_target = target_override or target
 
-            # 阶段1: 生成大纲
-            st.subheader("阶段 1/2: 生成大纲")
-            with st.status("正在构思故事大纲..."):
-                outline = generate_outline(st.session_state.analyses, user_idea, model)
-                st.session_state.outline = outline
-            st.markdown(outline)
-
-            # 阶段2: 逐章生成
-            st.subheader("阶段 2/2: 逐章写作")
+            st.subheader("写作中...")
             progress = st.progress(0)
             chapter_status = st.empty()
-            word_status = st.empty()
 
             def update_progress(i, total, title):
                 progress.progress(i / total)
@@ -174,7 +197,6 @@ else:
 
             progress.progress(1.0)
             chapter_status.success(f"[OK] 全书生成完毕！ {len(full):,} 字")
-            word_status.empty()
 
     # 显示生成结果
     if st.session_state.full_novel:
