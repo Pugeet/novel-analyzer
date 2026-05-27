@@ -4,3 +4,4 @@ __pycache__/
 novel_memory/
 chroma_db/
 .DS_Store
+projects/
