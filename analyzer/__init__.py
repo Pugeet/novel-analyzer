@@ -6,4 +6,5 @@ from analyzer.narrative import analyze_narrative
 from analyzer.conflict import analyze_conflict
 from analyzer.characters import analyze_characters
 from analyzer.theme import analyze_theme
-from analyzer.writer import generate_outline, write_full_novel, polish_novel
+from analyzer.writer import generate_outline, write_full_novel, polish_novel, extract_chapter_titles
+from analyzer.project import ProjectManager

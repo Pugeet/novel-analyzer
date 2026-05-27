@@ -16,7 +16,7 @@ class NovelLLM:
 
     def _get_claude(self):
         return ChatAnthropic(
-            model="claude-sonnet-4-6",
+            model="claude-sonnet-4-20250514",
             temperature=0.7,
             max_tokens=4096,
         )
@@ -35,11 +35,11 @@ class NovelLLM:
         if self.model_choice == "claude":
             llm = self._get_claude()
             prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
+                ("system", "{system_prompt}"),
                 ("human", "{input}"),
             ])
             chain = prompt | llm | StrOutputParser()
-            return chain.invoke({"input": user_prompt})
+            return chain.invoke({"system_prompt": system_prompt, "input": user_prompt})
 
         elif self.model_choice == "deepseek":
             client = self._get_deepseek()

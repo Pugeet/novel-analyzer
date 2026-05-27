@@ -2,7 +2,17 @@
 小说仿写引擎 — 输入想法 + 分析结果 -> 一键生成全书
 字数自动匹配输入小说
 """
+import re
+
 from analyzer.llm import NovelLLM
+
+
+def extract_chapter_titles(outline: str, default_count: int = 10) -> list[str]:
+    """Extract chapter titles from an outline string."""
+    titles = re.findall(r'(?:第\d+章[^:\n]*|Chapter\s*\d+[^\n]*)', outline)
+    if not titles:
+        titles = [f"第{i+1}章" for i in range(default_count)]
+    return titles
 
 
 def generate_outline(analyses: dict, user_idea: str, model: str = "claude") -> str:
@@ -20,33 +30,38 @@ def write_full_novel(
     target_words: int,
     model: str = "claude",
     progress_callback=None,
+    checkpoint_callback=None,
+    start_chapter: int = 0,
+    initial_full_text: str = "",
+    initial_previous_context: str = "",
 ) -> str:
     """
     一键生成全书，字数匹配输入小说。
 
-    策略：分章节生成，每章目标字数 = target_words / 10
+    策略：分章节生成，每章目标字数 = target_words / 章节数
     所有章节连续输出，前文自动作为后文上下文。
+
+    start_chapter: 0-indexed, resume from this chapter (0 = fresh start)
+    initial_full_text: pre-existing generated text when resuming
+    initial_previous_context: pre-existing sliding context when resuming
     """
     llm = NovelLLM(model)
 
-    # 从大纲中提取章数
-    import re
-    chapter_titles = re.findall(
-        r'(?:第\d+章[^:\n]*|Chapter\s*\d+[^\n]*)', outline
-    )
-    if not chapter_titles:
-        # 自己规划章节
-        chapter_titles = [f"第{i+1}章" for i in range(10)]
-
+    chapter_titles = extract_chapter_titles(outline)
     total_chapters = len(chapter_titles)
     words_per_chapter = max(500, target_words // total_chapters)
 
     analysis_summary = _build_summary(analyses)
 
-    full_text = _title_page(analyses, user_idea, outline)
-    previous = ""
+    if start_chapter == 0:
+        full_text = _title_page(analyses, user_idea, outline)
+    else:
+        full_text = initial_full_text
 
-    for i, ch_title in enumerate(chapter_titles):
+    previous = initial_previous_context
+
+    for i, ch_title in enumerate(chapter_titles[start_chapter:],
+                                 start=start_chapter):
         if progress_callback:
             progress_callback(i + 1, total_chapters, ch_title)
 
@@ -60,6 +75,9 @@ def write_full_novel(
         prev_parts = previous.split("## ")
         if len(prev_parts) > 4:
             previous = "## " + "## ".join(prev_parts[-4:])
+
+        if checkpoint_callback:
+            checkpoint_callback(i + 1, ch_title, chapter, full_text, previous)
 
     return full_text
 
@@ -189,7 +207,6 @@ def _write_one_chapter(llm, analysis_summary, outline, user_idea,
 
 def _title_page(analyses, user_idea, outline):
     """生成卷首信息"""
-    import re
     title = "仿写作品"
     match = re.search(r'## 故事标题\s*\n(.+)', outline)
     if match:

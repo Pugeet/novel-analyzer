@@ -11,6 +11,7 @@ from analyzer import (
     analyze_characters, analyze_theme,
 )
 from analyzer.writer import generate_outline, write_full_novel
+from analyzer.project import ProjectManager
 from obsidian import export_to_obsidian
 
 st.set_page_config(page_title="小说分析+仿写", page_icon="[BOOK]", layout="wide")
@@ -21,18 +22,63 @@ st.caption("上传参考小说 -> AI 分析写作技巧 -> 输入你的创作想
 for k, v in {
     "novel_text": "", "novel_name": "", "chapters": [],
     "analyses": {}, "outline": "", "full_novel": "", "novel_words": 0,
+    "model": "claude", "user_idea": "", "target_words": 0,
+    "completed_chapters": 0, "chapter_titles": [],
+    "total_chapters": 0, "words_per_chapter": 0,
+    "previous_context": "", "project_loaded": False,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+# ===== 项目恢复（检测未完成项目） =====
+if not st.session_state.project_loaded:
+    projects = ProjectManager.list_projects()
+    if projects:
+        st.info("检测到之前的写作项目。您可以恢复进度继续写作，或开始全新项目。")
+        col_a, col_b = st.columns([2, 1])
+        with col_a:
+            resume_choice = st.selectbox(
+                "选择项目",
+                ["-- 开始新项目 --"] + projects,
+                key="resume_select",
+            )
+        with col_b:
+            st.write("")
+            if st.button("确认", type="primary", use_container_width=True):
+                if resume_choice == "-- 开始新项目 --":
+                    st.session_state.project_loaded = True
+                    st.rerun()
+                else:
+                    pm = ProjectManager(resume_choice)
+                    data = pm.load_project()
+                    if data:
+                        for k in ["novel_text", "novel_name", "chapters",
+                                   "analyses", "outline", "full_novel",
+                                   "novel_words", "model", "user_idea",
+                                   "target_words", "completed_chapters",
+                                   "chapter_titles", "total_chapters",
+                                   "words_per_chapter", "previous_context"]:
+                            if k in data:
+                                st.session_state[k] = data[k]
+                        st.session_state.project_loaded = True
+                        st.success(f"已恢复项目: {resume_choice}（已完成 {data.get('completed_chapters', 0)}/{data.get('total_chapters', '?')} 章）")
+                        st.rerun()
+        st.stop()
+    else:
+        st.session_state.project_loaded = True
+        st.rerun()
+
 # ===== 侧边栏 =====
 with st.sidebar:
     st.header("[GEAR] 模型配置")
+    model_idx = 0 if st.session_state.get("model", "claude") == "claude" else 1
     model = st.selectbox(
         "选择模型",
         ["claude", "deepseek"],
         format_func=lambda x: "Claude (Sonnet 4.6)" if x == "claude" else "DeepSeek (Chat)",
+        index=model_idx,
     )
+    st.session_state.model = model
     if model == "deepseek" and not os.environ.get("DEEPSEEK_API_KEY"):
         key = st.text_input("DeepSeek API Key", type="password")
         if key:
@@ -99,6 +145,19 @@ if not st.session_state.analyses:
         status.success("[OK] 分析完成！")
         progress.empty()
 
+    # 分析完成后自动保存
+    if st.session_state.analyses and st.session_state.novel_name:
+        pm = ProjectManager(st.session_state.novel_name)
+        pm.save_analysis(
+            novel_text=st.session_state.novel_text,
+            novel_name=st.session_state.novel_name,
+            chapters=st.session_state.chapters,
+            analyses=st.session_state.analyses,
+            novel_words=st.session_state.novel_words,
+            model=st.session_state.model,
+            user_idea=st.session_state.user_idea,
+        )
+
 if st.session_state.analyses:
     dim_names = {"style": "风格", "narrative": "叙事", "conflict": "冲突",
                  "characters": "人物", "theme": "主题"}
@@ -120,13 +179,16 @@ else:
     st.markdown("#### 3a. 描述你的故事")
     user_idea = st.text_area(
         "你想写一个什么样的故事？（情节、人物、背景，越详细越好）",
+        value=st.session_state.user_idea,
         placeholder="例：一个都市悬疑故事。主角是外卖小哥陈然，某天送餐时无意间撞见一桩凶案，"
                     "凶手发现了他，开始追杀。陈然只能靠自己送外卖时积累的对城市每个角落的了解，"
                     "在城市的缝隙中求生，同时一步步揭开凶手背后的秘密组织...",
         height=80,
     )
+    st.session_state.user_idea = user_idea
 
     target = st.session_state.novel_words
+    st.session_state.target_words = target
     st.caption(f"目标字数: {target:,} 字（与参考小说一致）")
 
     col_a, col_b = st.columns([1, 2])
@@ -143,6 +205,12 @@ else:
                 st.session_state.outline = generate_outline(
                     st.session_state.analyses, user_idea, model
                 )
+            # 保存大纲及章节元数据
+            pm = ProjectManager(st.session_state.novel_name)
+            meta = pm.save_outline(st.session_state.outline, target)
+            st.session_state.chapter_titles = meta["chapter_titles"]
+            st.session_state.total_chapters = meta["total_chapters"]
+            st.session_state.words_per_chapter = meta["words_per_chapter"]
             st.success("大纲已生成，请审阅修改")
 
     # --- 3b: 审阅修改大纲 ---
@@ -175,6 +243,16 @@ else:
 
         if write_btn:
             final_target = target_override or target
+            pm = ProjectManager(st.session_state.novel_name)
+
+            # 显示部分下载按钮（如有之前保存的进度）
+            partial_text = pm.get_partial_novel_text()
+            if partial_text:
+                st.download_button(
+                    "[DOWNLOAD] 下载当前进度 (TXT)",
+                    partial_text,
+                    file_name=f"{st.session_state.novel_name}_草稿.txt",
+                )
 
             st.subheader("写作中...")
             progress = st.progress(0)
@@ -184,6 +262,18 @@ else:
                 progress.progress(i / total)
                 chapter_status.info(f"正在写: {title} ({i}/{total})")
 
+            # 断点续写参数
+            start_ch = st.session_state.completed_chapters
+            initial_text = st.session_state.full_novel if start_ch > 0 else ""
+            initial_ctx = st.session_state.previous_context
+
+            def on_chapter_done(ch_index, ch_title, ch_text,
+                                full_so_far, prev_ctx):
+                pm.save_checkpoint(ch_index, full_so_far, prev_ctx)
+                st.session_state.full_novel = full_so_far
+                st.session_state.completed_chapters = ch_index
+                st.session_state.previous_context = prev_ctx
+
             with st.spinner(f"创作中 (目标 {final_target:,} 字)..."):
                 full = write_full_novel(
                     st.session_state.analyses,
@@ -192,8 +282,13 @@ else:
                     final_target,
                     model,
                     update_progress,
+                    checkpoint_callback=on_chapter_done,
+                    start_chapter=start_ch,
+                    initial_full_text=initial_text,
+                    initial_previous_context=initial_ctx,
                 )
                 st.session_state.full_novel = full
+                st.session_state.completed_chapters = st.session_state.total_chapters
 
             progress.progress(1.0)
             chapter_status.success(f"[OK] 全书生成完毕！ {len(full):,} 字")
@@ -222,9 +317,22 @@ with c1:
         st.session_state.analyses = {}
         st.session_state.outline = ""
         st.session_state.full_novel = ""
+        st.session_state.completed_chapters = 0
+        st.session_state.chapter_titles = []
+        st.session_state.total_chapters = 0
+        st.session_state.words_per_chapter = 0
+        st.session_state.previous_context = ""
         st.rerun()
 with c2:
     if st.button("[NEW] 换一本参考小说"):
-        for k in ["novel_text", "novel_name", "chapters", "analyses", "outline", "full_novel"]:
-            st.session_state[k] = "" if k != "chapters" and k != "analyses" and k != "outline" else ({} if k in ("analyses", "outline") else [])
+        defaults = {
+            "novel_text": "", "novel_name": "", "chapters": [],
+            "analyses": {}, "outline": "", "full_novel": "",
+            "novel_words": 0, "model": "claude", "user_idea": "",
+            "target_words": 0, "completed_chapters": 0,
+            "chapter_titles": [], "total_chapters": 0,
+            "words_per_chapter": 0, "previous_context": "",
+        }
+        for k, v in defaults.items():
+            st.session_state[k] = v
         st.rerun()
