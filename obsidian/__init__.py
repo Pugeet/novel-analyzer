@@ -1,0 +1,1 @@
+from obsidian.exporter import export_to_obsidian
